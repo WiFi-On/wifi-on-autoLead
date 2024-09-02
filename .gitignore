@@ -1,0 +1,6 @@
+*.env
+certs/
+*.tmp
+*.log
+*.swp
+*.swo
