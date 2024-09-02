@@ -1,5 +1,6 @@
 *.env
-certs/
+*.key
+*.crt
 *.tmp
 *.log
 *.swp
