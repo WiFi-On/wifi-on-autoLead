@@ -8,24 +8,30 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"wifionAutolead/internal/models"
 )
 
-// Address содержит информацию об одном адресе из XML-ответа
-type Address struct {
-	RegionId       int    `xml:"RegionId"`
-	AddrObjectId   string `xml:"AddrObjectId"`
-	NameAddrObject string `xml:"NameAddrObject"`
-	AbbrNameObject string `xml:"AbbrNameObject"`
-	ParentId       string `xml:"ParentId"`
-}
+// GetClient возвращает клиент для запроса к EISSD
+func getClient(cert tls.Certificate) *http.Client {
+	// Создание конфигурации TLS
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true,
+	}
 
-// GetAddressInfoAgentResponse структура для обработки всего XML-ответа
-type GetAddressInfoAgentResponse struct {
-	Addresses []Address `xml:"addresss>address"`
+	// Настройка транспортного уровня с использованием TLS
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
+	return &http.Client{
+		Transport: transport,
+	}
 }
 
 // FetchAddressDirectory извлекает справочник населенных пунктов или адресов
-func FetchAddressDirectory(regionID int, structAddrObject int, searchName string) ([]Address, error) {
+func FetchAddressDirectory(regionID int, structAddrObject int, searchName string) ([]models.Address, error) {
 	// Форматирование текущего времени
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -43,20 +49,7 @@ func FetchAddressDirectory(regionID int, structAddrObject int, searchName string
 		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
 	}
 
-	// Создание конфигурации TLS
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	}
-
-	// Настройка транспортного уровня с использованием TLS
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-
-	client := &http.Client{
-		Transport: transport,
-	}
+	client := getClient(cert)
 
 	// Создание HTTP запроса
 	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
@@ -81,13 +74,13 @@ func FetchAddressDirectory(regionID int, structAddrObject int, searchName string
 	}
 
 	// Парсинг XML в структуру
-	var result GetAddressInfoAgentResponse
+	var result models.GetAddressInfoAgentResponse
 	if err := xml.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
 	}
 
 	// Фильтрация результатов по NameAddrObject
-	var filteredAddresses []Address
+	var filteredAddresses []models.Address
 	for _, address := range result.Addresses {
 		if address.NameAddrObject == searchName {
 			filteredAddresses = append(filteredAddresses, address)
@@ -97,21 +90,8 @@ func FetchAddressDirectory(regionID int, structAddrObject int, searchName string
 	return filteredAddresses, nil
 }
 
-// AddressHouse содержит информацию об одном доме из XML-ответа
-type AddressHouse struct {
-	RegionId int    `xml:"RegionId"`
-	StreetId string `xml:"StreetId"`
-	HouseId  string `xml:"HouseId"`
-	House    string `xml:"House"`
-}
-
-// GetAddressHouseInfoAgentResponse структура для обработки всего XML-ответа
-type GetAddressHouseInfoAgentResponse struct {
-	AddressHouses []AddressHouse `xml:"AddressHouses>AddressHouse"`
-}
-
 // FetchAddressHouseInfo ищет дома по указанному региону, StreetId и House
-func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]AddressHouse, error) {
+func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]models.AddressHouse, error) {
 	// Форматирование текущего времени
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -128,20 +108,7 @@ func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]
 		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
 	}
 
-	// Создание конфигурации TLS
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	}
-
-	// Настройка транспортного уровня с использованием TLS
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-
-	client := &http.Client{
-		Transport: transport,
-	}
+	client := getClient(cert)
 
 	// Создание HTTP запроса
 	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
@@ -166,13 +133,13 @@ func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]
 	}
 
 	// Парсинг XML в структуру
-	var result GetAddressHouseInfoAgentResponse
+	var result models.GetAddressHouseInfoAgentResponse
 	if err := xml.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
 	}
 
 	// Фильтрация результатов по StreetId и House
-	var filteredHouses []AddressHouse
+	var filteredHouses []models.AddressHouse
 	for _, house := range result.AddressHouses {
 		if house.StreetId == searchStreetId && house.House == searchHouse {
 			filteredHouses = append(filteredHouses, house)
@@ -180,12 +147,6 @@ func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]
 	}
 
 	return filteredHouses, nil
-}
-
-// CheckConnectionPossibilityResponse описывает ответ на запрос проверки возможности подключения
-type CheckConnectionPossibilityResponse struct {
-	Response int    `xml:"Response"`
-	Message  string `xml:"Message"`
 }
 
 // CheckConnectionPossibilityAgent выполняет проверку возможности подключения
@@ -211,20 +172,7 @@ func CheckConnectionPossibilityAgent(regionID int, cityID string, streetID strin
 		return 0, "", fmt.Errorf("ошибка при загрузке сертификата: %w", err)
 	}
 
-	// Создание конфигурации TLS
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	}
-
-	// Настройка транспортного уровня с использованием TLS
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-
-	client := &http.Client{
-		Transport: transport,
-	}
+	client := getClient(cert)
 
 	// Создание HTTP-запроса
 	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
@@ -249,11 +197,60 @@ func CheckConnectionPossibilityAgent(regionID int, cityID string, streetID strin
 	}
 
 	// Парсинг XML в структуру
-	var result CheckConnectionPossibilityResponse
+	var result models.CheckConnectionPossibilityResponse
 	if err := xml.Unmarshal(body, &result); err != nil {
 		return 0, "", fmt.Errorf("ошибка при парсинге XML: %w", err)
 	}
 
 	// Возврат результата
 	return result.Response, result.Message, nil
+}
+
+// GetTarrifsOnRegion получение тарифов по региону
+func GetTarrifsOnRegion(region int) (models.GetTariffPlansAgent, error) {
+
+	requestBody := fmt.Sprintf(`
+		<GetTariffPlansAgent>
+    		<RegionId>%d</RegionId>
+		</GetTariffPlansAgent>`, region)
+
+	// Загрузка сертификата и ключа
+	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
+	if err != nil {
+		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
+	}
+
+	client := getClient(cert)
+
+	// Создание HTTP-запроса
+	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
+	if err != nil {
+		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при создании запроса: %w", err)
+	}
+
+	// Установка необходимых заголовков
+	req.Header.Set("Content-Type", "text/xml")
+
+	// Отправка HTTP-запроса
+	resp, err := client.Do(req)
+	if err != nil {
+		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при отправке запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Чтение ответа
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
+	}
+
+	// Парсинг XML в структуру
+	var data models.GetTariffPlansAgent
+	err = xml.Unmarshal(body, &data)
+	if err != nil {
+		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при разборе XML: %w", err)
+	}
+
+	// Возврат результата
+	return data, nil
 }
