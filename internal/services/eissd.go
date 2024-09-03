@@ -30,8 +30,8 @@ func getClient(cert tls.Certificate) *http.Client {
 	}
 }
 
-// FetchAddressDirectory извлекает справочник населенных пунктов или адресов
-func FetchAddressDirectory(regionID int, structAddrObject int, searchName string) ([]models.Address, error) {
+// FetchAddressDirectory извлекает справочник населенных пунктов или адресов и сохраняет в мапу
+func FetchAddressDirectory(regionID int, structAddrObject int, searchName string) (map[string][]string, error) {
 	// Форматирование текущего времени
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -73,25 +73,60 @@ func FetchAddressDirectory(regionID int, structAddrObject int, searchName string
 		return nil, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
 	}
 
-	// Парсинг XML в структуру
-	var result models.GetAddressInfoAgentResponse
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
-	}
+	// Создание мапы для хранения отфильтрованных данных
+	addressMap := make(map[string][]string)
 
-	// Фильтрация результатов по NameAddrObject
-	var filteredAddresses []models.Address
-	for _, address := range result.Addresses {
-		if address.NameAddrObject == searchName {
-			filteredAddresses = append(filteredAddresses, address)
+	// Использование XML Decoder для посимвольного чтения XML
+	decoder := xml.NewDecoder(strings.NewReader(string(body)))
+	var currentElement string
+	var regionIDStr, nameAddrObject, addrObjectId, parentId string
+
+	for {
+		t, err := decoder.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("ошибка при чтении токенов XML: %w", err)
+		}
+
+		switch se := t.(type) {
+		case xml.StartElement:
+			currentElement = se.Name.Local
+		case xml.CharData:
+			data := strings.TrimSpace(string(se))
+			if data == "" {
+				continue
+			}
+			switch currentElement {
+			case "RegionId":
+				regionIDStr = data
+			case "NameAddrObject":
+				nameAddrObject = data
+			case "AddrObjectId":
+				addrObjectId = data
+			case "ParentId":
+				parentId = data
+			}
+		case xml.EndElement:
+			if se.Name.Local == "address" {
+				if nameAddrObject == searchName && regionIDStr == fmt.Sprintf("%d", regionID) {
+					key := fmt.Sprintf("%s;%s", regionIDStr, nameAddrObject)
+					value := fmt.Sprintf("%s;%s", addrObjectId, parentId)
+					addressMap[key] = append(addressMap[key], value)
+				}
+				// Сброс значений для следующего Address
+				regionIDStr, nameAddrObject, addrObjectId, parentId = "", "", "", ""
+			}
 		}
 	}
-
-	return filteredAddresses, nil
+	return addressMap, nil
 }
 
-// FetchAddressHouseInfo ищет дома по указанному региону, StreetId и House
-func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]models.AddressHouse, error) {
+func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) (map[string][]string, error) {
+	// Замер времени начала выполнения функции
+	startFunction := time.Now()
+
 	// Форматирование текущего времени
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -102,51 +137,98 @@ func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]
 			<RegionId>%d</RegionId>
 		</GetAddressHouseInfoAgent>`, dateRequest, regionID)
 
-	// Загрузка сертификата и ключа
+	// Замер времени для загрузки сертификата
+	startCert := time.Now()
 	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
 	}
+	fmt.Printf("Время загрузки сертификата: %v\n", time.Since(startCert))
 
 	client := getClient(cert)
 
 	// Создание HTTP запроса
+	startRequest := time.Now()
 	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при создании запроса: %w", err)
 	}
+	fmt.Printf("Время создания HTTP запроса: %v\n", time.Since(startRequest))
 
 	// Установка необходимых заголовков
 	req.Header.Set("Content-Type", "text/xml")
 
 	// Отправка HTTP запроса
+	startHTTP := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при отправке запроса: %w", err)
 	}
+	fmt.Printf("Время отправки HTTP запроса и получения ответа: %v\n", time.Since(startHTTP))
 	defer resp.Body.Close()
 
 	// Чтение ответа
+	startRead := time.Now()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
 	}
+	fmt.Printf("Время чтения ответа: %v\n", time.Since(startRead))
 
-	// Парсинг XML в структуру
-	var result models.GetAddressHouseInfoAgentResponse
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
-	}
+	// Создание мапы для хранения отфильтрованных данных
+	houseMap := make(map[string][]string)
 
-	// Фильтрация результатов по StreetId и House
-	var filteredHouses []models.AddressHouse
-	for _, house := range result.AddressHouses {
-		if house.StreetId == searchStreetId && house.House == searchHouse {
-			filteredHouses = append(filteredHouses, house)
+	// Использование XML Decoder для посимвольного чтения XML
+	startParse := time.Now()
+	decoder := xml.NewDecoder(strings.NewReader(string(body)))
+	var currentElement string
+	var regionIDStr, streetID, houseID, house string
+
+	for {
+		t, err := decoder.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("ошибка при чтении токенов XML: %w", err)
+		}
+
+		switch se := t.(type) {
+		case xml.StartElement:
+			currentElement = se.Name.Local
+		case xml.CharData:
+			data := strings.TrimSpace(string(se))
+			if data == "" {
+				continue
+			}
+			switch currentElement {
+			case "RegionId":
+				regionIDStr = data
+			case "StreetId":
+				streetID = data
+			case "HouseId":
+				houseID = data
+			case "House":
+				house = data
+			}
+		case xml.EndElement:
+			if se.Name.Local == "AddressHouse" {
+				if streetID == searchStreetId && house == searchHouse {
+					key := fmt.Sprintf("%s;%s", regionIDStr, streetID)
+					value := fmt.Sprintf("%s;%s", houseID, house)
+					houseMap[key] = append(houseMap[key], value)
+				}
+				// Сброс значений для следующего AddressHouse
+				regionIDStr, streetID, houseID, house = "", "", "", ""
+			}
 		}
 	}
+	fmt.Printf("Время парсинга XML: %v\n", time.Since(startParse))
 
-	return filteredHouses, nil
+	// Замер общего времени выполнения функции
+	fmt.Printf("Общее время выполнения функции FetchAddressHouseInfo: %v\n", time.Since(startFunction))
+
+	return houseMap, nil
 }
 
 // CheckConnectionPossibilityAgent выполняет проверку возможности подключения

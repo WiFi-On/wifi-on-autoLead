@@ -4,97 +4,121 @@ package main
 
 import (
 	"fmt"
+	"strings"
+	"time"
 	"wifionAutolead/internal/services"
 )
 
+type Address struct {
+	RegionID int
+	CityID   string
+	StreetID string
+	HouseID  string
+}
+
 func main() {
-	// Заполняем адрес
-	var region int = 72
-	var city string = "Тюмень"
-	var street string = "Олимпийская"
-	var house string = "47"
-	var svcClassId int = 2 // Пример идентификатора класса услуги
+	// Для примера используем захардкоженные значения
+	regionID := 72
+	cityName := "Тюмень"
+	streetName := "Олимпийская"
+	houseName := "47"
 
-	// Список для хранения итоговых результатов
-	var finalResults []struct {
-		RegionId int
-		CityId   string
-		StreetId string
-		HouseId  string
-	}
-
-	// Получаем адреса районов/городов
-	district_addresses, err := services.FetchAddressDirectory(region, 1, city)
+	// Замер времени для выполнения функции справочника города
+	startCity := time.Now()
+	cityMap, err := services.FetchAddressDirectory(regionID, 1, cityName)
 	if err != nil {
-		fmt.Println("Ошибка:", err)
+		fmt.Println("Ошибка при получении данных для города:", err)
 		return
 	}
+	fmt.Printf("Время выполнения справочника города: %v\n", time.Since(startCity))
 
-	// Получаем адреса улиц
-	street_addresses, err := services.FetchAddressDirectory(region, 0, street)
+	// Замер времени для выполнения функции справочника улицы
+	startStreet := time.Now()
+	streetMap, err := services.FetchAddressDirectory(regionID, 0, streetName)
 	if err != nil {
-		fmt.Println("Ошибка:", err)
+		fmt.Println("Ошибка при получении данных для улицы:", err)
 		return
 	}
+	fmt.Printf("Время выполнения справочника улицы: %v\n", time.Since(startStreet))
 
-	// Поиск объектов, где ParentId из street_addresses совпадает с AddrObjectId из district_addresses
-	for _, district := range district_addresses {
-		for _, street := range street_addresses {
-			if street.ParentId == district.AddrObjectId {
-				// Для каждого найденного совпадения ищем дома
-				houses, err := services.FetchAddressHouseInfo(region, street.AddrObjectId, house)
-				if err != nil {
-					fmt.Println("Ошибка при получении домов:", err)
-					continue
-				}
+	// Замер времени на пересечение города и улиц
+	startIntersection := time.Now()
+	addresses := findIntersections(regionID, cityMap, streetMap)
+	fmt.Printf("Время выполнения пересечения города и улиц: %v\n", time.Since(startIntersection))
 
-				// Вывод найденных домов и сохранение результата
-				if len(houses) > 0 {
-					fmt.Println("Найденные дома на улице", street.NameAddrObject)
-					for _, house := range houses {
-						fmt.Printf("Дом: %s, ID дома: %s\n", house.House, house.HouseId)
+	// Замер времени для получения справочника домов и их пересечения
+	startHouseDirectory := time.Now()
+	houseMap := fetchHouseDirectory(regionID, addresses, houseName)
+	fmt.Printf("Время выполнения получения справочника домов: %v\n", time.Since(startHouseDirectory))
 
-						// Сохранение результатов для вывода
-						finalResults = append(finalResults, struct {
-							RegionId int
-							CityId   string
-							StreetId string
-							HouseId  string
-						}{
-							RegionId: house.RegionId,
-							CityId:   district.AddrObjectId,
-							StreetId: street.AddrObjectId,
-							HouseId:  house.HouseId,
-						})
+	// Замер времени на пересечение домов с найденными адресами
+	startHouseIntersection := time.Now()
+	addresses = intersectHousesWithAddresses(addresses, houseMap)
+	fmt.Printf("Время выполнения пересечения домов с адресами: %v\n", time.Since(startHouseIntersection))
+
+	// Вывод содержимого среза пересечений для проверки
+	fmt.Println("Список пересечений:")
+	for _, intersection := range addresses {
+		fmt.Printf("RegionID: %d, CityID: %s, StreetID: %s, HouseID: %v\n",
+			intersection.RegionID, intersection.CityID, intersection.StreetID, intersection.HouseID)
+	}
+}
+
+// findIntersections ищет пересечения между городами и улицами
+func findIntersections(regionID int, cityMap, streetMap map[string][]string) []Address {
+	var addresses []Address
+	for _, cityValues := range cityMap {
+		for _, cityValue := range cityValues {
+			cityAddrObjectId := strings.Split(cityValue, ";")[0]
+
+			for _, streetValues := range streetMap {
+				for _, streetValue := range streetValues {
+					streetAddrObjectId := strings.Split(streetValue, ";")[0]
+					streetParentId := strings.Split(streetValue, ";")[1]
+
+					if cityAddrObjectId == streetParentId {
+						address := Address{
+							RegionID: regionID,
+							CityID:   cityAddrObjectId,
+							StreetID: streetAddrObjectId,
+							HouseID:  "", // Пока пустое значение
+						}
+						addresses = append(addresses, address)
 					}
-				} else {
-					fmt.Println("Дома на улице", street.NameAddrObject, "не найдены.")
 				}
 			}
 		}
 	}
+	return addresses
+}
 
-	// Вывод найденных объектов с RegionID, DistrictID, StreetID, HouseID
-	if len(finalResults) > 0 {
-		fmt.Println("Итоговые результаты:")
-		for _, result := range finalResults {
-			fmt.Printf("RegionID: %d, CityID: %s, StreetID: %s, HouseID: %s\n",
-				result.RegionId, result.CityId, result.StreetId, result.HouseId)
+// fetchHouseDirectory получает справочник домов для каждого найденного адреса
+func fetchHouseDirectory(regionID int, addresses []Address, houseName string) map[string][]string {
+	houseMap := make(map[string][]string)
+	for _, address := range addresses {
+		currentHouseMap, err := services.FetchAddressHouseInfo(regionID, address.StreetID, houseName)
+		if err != nil {
+			fmt.Println("Ошибка при получении данных для дома:", err)
+			continue
 		}
 
-		// Проверка возможности подключения для каждого найденного результата
-		for _, result := range finalResults {
-			response, message, err := services.CheckConnectionPossibilityAgent(result.RegionId, result.CityId, result.StreetId, result.HouseId, svcClassId)
-			if err != nil {
-				fmt.Println("Ошибка при проверке возможности подключения:", err)
-			} else if response == 0 {
-				fmt.Printf("Подключение возможно для дома с HouseID: %s на улице с StreetID: %s.\n", result.HouseId, result.StreetId)
-			} else {
-				fmt.Printf("Подключение невозможно для дома с HouseID: %s на улице с StreetID: %s. Причина: %s\n", result.HouseId, result.StreetId, message)
+		for key, values := range currentHouseMap {
+			houseMap[key] = values
+		}
+	}
+	return houseMap
+}
+
+// intersectHousesWithAddresses сопоставляет дома с найденными адресами
+func intersectHousesWithAddresses(addresses []Address, houseMap map[string][]string) []Address {
+	for i, address := range addresses {
+		houseKey := fmt.Sprintf("%d;%s", address.RegionID, address.StreetID)
+		if houses, exists := houseMap[houseKey]; exists {
+			for _, houseValue := range houses {
+				addresses[i].HouseID = strings.Split(houseValue, ";")[0]
+				break
 			}
 		}
-
-	} else {
-		fmt.Println("Не найдено объектов с совпадающими RegionID, CityID, StreetID и HouseID.")
 	}
+	return addresses
 }
