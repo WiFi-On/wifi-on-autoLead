@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"wifionAutolead/internal/models"
+	"wifionAutolead/pkg/eissd"
 )
 
 // GetClient возвращает клиент для запроса к EISSD
@@ -28,125 +30,6 @@ func getClient(cert tls.Certificate) *http.Client {
 	return &http.Client{
 		Transport: transport,
 	}
-}
-
-// FetchAddressDirectory извлекает справочник населенных пунктов или адресов
-func FetchAddressDirectory(regionID int, structAddrObject int, searchName string) ([]models.Address, error) {
-	// Форматирование текущего времени
-	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
-
-	// Создание XML тела запроса
-	requestBody := fmt.Sprintf(`
-		<GetAddressInfoAgent DateRequest="%s" IdRequest="10001">
-			<Release>2</Release>
-			<RegionId>%d</RegionId>
-			<StructAddrObject>%d</StructAddrObject>
-		</GetAddressInfoAgent>`, dateRequest, regionID, structAddrObject)
-
-	// Загрузка сертификата и ключа
-	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
-	}
-
-	client := getClient(cert)
-
-	// Создание HTTP запроса
-	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при создании запроса: %w", err)
-	}
-
-	// Установка необходимых заголовков
-	req.Header.Set("Content-Type", "text/xml")
-
-	// Отправка HTTP запроса
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при отправке запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Чтение ответа
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
-	}
-
-	// Парсинг XML в структуру
-	var result models.GetAddressInfoAgentResponse
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
-	}
-
-	// Фильтрация результатов по NameAddrObject
-	var filteredAddresses []models.Address
-	for _, address := range result.Addresses {
-		if address.NameAddrObject == searchName {
-			filteredAddresses = append(filteredAddresses, address)
-		}
-	}
-
-	return filteredAddresses, nil
-}
-
-// FetchAddressHouseInfo ищет дома по указанному региону, StreetId и House
-func FetchAddressHouseInfo(regionID int, searchStreetId, searchHouse string) ([]models.AddressHouse, error) {
-	// Форматирование текущего времени
-	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
-
-	// Создание XML тела запроса
-	requestBody := fmt.Sprintf(`
-		<GetAddressHouseInfoAgent DateRequest="%s" IdRequest="10001">
-			<Release>2</Release>
-			<RegionId>%d</RegionId>
-		</GetAddressHouseInfoAgent>`, dateRequest, regionID)
-
-	// Загрузка сертификата и ключа
-	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
-	}
-
-	client := getClient(cert)
-
-	// Создание HTTP запроса
-	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при создании запроса: %w", err)
-	}
-
-	// Установка необходимых заголовков
-	req.Header.Set("Content-Type", "text/xml")
-
-	// Отправка HTTP запроса
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при отправке запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Чтение ответа
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
-	}
-
-	// Парсинг XML в структуру
-	var result models.GetAddressHouseInfoAgentResponse
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
-	}
-
-	// Фильтрация результатов по StreetId и House
-	var filteredHouses []models.AddressHouse
-	for _, house := range result.AddressHouses {
-		if house.StreetId == searchStreetId && house.House == searchHouse {
-			filteredHouses = append(filteredHouses, house)
-		}
-	}
-
-	return filteredHouses, nil
 }
 
 // CheckConnectionPossibilityAgent выполняет проверку возможности подключения
@@ -208,7 +91,6 @@ func CheckConnectionPossibilityAgent(regionID int, cityID string, streetID strin
 
 // GetTarrifsOnRegion получение тарифов по региону
 func GetTarrifsOnRegion(region int) (models.GetTariffPlansAgent, error) {
-
 	requestBody := fmt.Sprintf(`
 		<GetTariffPlansAgent>
     		<RegionId>%d</RegionId>
@@ -253,4 +135,57 @@ func GetTarrifsOnRegion(region int) (models.GetTariffPlansAgent, error) {
 
 	// Возврат результата
 	return data, nil
+}
+
+func CheckTHV(address string) {
+	// Разделяем строку адреса по запятым
+	parts := strings.Split(address, ",")
+	if len(parts) != 4 {
+		panic("Неверный формат адреса. Ожидается формат: 'regionID, cityName, streetName, houseNumber'")
+	}
+
+	// Присваиваем переменным значения, полученные из строки адреса
+	regionID := parts[0]
+	cityName := strings.TrimSpace(parts[1])
+	streetName := strings.TrimSpace(parts[2])
+	houseNumber := strings.TrimSpace(parts[3])
+
+	// Преобразование regionID из string в int
+	regionIDInt, err := strconv.Atoi(regionID)
+	if err != nil {
+		panic(fmt.Sprintf("Ошибка преобразования regionID: %v", err))
+	}
+
+	// Вызов функции для получения CityID (или DistrictID) из БД
+	cityID, err := eissd.GetDistrictIDByRegionAndName(regionIDInt, cityName)
+	if err != nil {
+		panic(err)
+	}
+
+	// Вызов функции для получения streetID по region, cityID и имени улицы
+	streetID, err := eissd.GetStreetIDByRegionNameAndDistrict(cityID, streetName, regionIDInt)
+	if err != nil {
+		panic(err)
+	}
+
+	// Вызов функции для получения houseID по region, streetID и номеру дома
+	houseID, err := eissd.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNumber)
+	if err != nil {
+		panic(err)
+	}
+
+	// Вызов функции для проверки подключения
+	responseCode, message, err := CheckConnectionPossibilityAgent(regionIDInt, cityID, streetID, houseID, 2)
+	if err != nil {
+		panic(err)
+	}
+
+	// Обработка результата
+	if responseCode == 0 {
+		// Подключение возможно
+		fmt.Println("Подключение есть")
+	} else {
+		// Возвращаем сообщение об ошибке
+		fmt.Printf("Ошибка: %s\n", message)
+	}
 }

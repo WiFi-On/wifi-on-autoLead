@@ -92,3 +92,42 @@ func (db *DB) AddHouses(id int, region string, house string, streetID int) error
 
 	return nil
 }
+
+// Получение id района (district) по region и name
+func (db *DB) GetDistrictIDByRegionAndName(region int, name string) (int, error) {
+	var districtID int
+
+	query := "SELECT id FROM districts WHERE region = ? AND name = ?"
+	err := db.Conn.QueryRow(query, region, name).Scan(&districtID)
+	if err != nil {
+		return 0, err
+	}
+
+	return districtID, nil
+}
+
+// Получение id улицы (street) по region, name и districtID
+func (db *DB) GetStreetIDByRegionNameAndDistrict(region int, name string, districtID int) (int, error) {
+	var streetID int
+
+	query := "SELECT id FROM streets WHERE region = ? AND name = ? AND district_id = ?"
+	err := db.Conn.QueryRow(query, region, name, districtID).Scan(&streetID)
+	if err != nil {
+		return 0, err
+	}
+
+	return streetID, nil
+}
+
+// Получение id дома по region, streetID и house
+func (db *DB) GetHouseIDByRegionStreetAndHouse(region int, streetID int, house int) (int, error) {
+	var houseID int
+
+	query := "SELECT id FROM houses WHERE region = ? AND street_id = ? AND house = ?"
+	err := db.Conn.QueryRow(query, region, streetID, house).Scan(&houseID)
+	if err != nil {
+		return 0, err
+	}
+
+	return houseID, nil
+}
