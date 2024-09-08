@@ -33,7 +33,7 @@ func getClient(cert tls.Certificate) *http.Client {
 }
 
 // CheckConnectionPossibilityAgent выполняет проверку возможности подключения
-func CheckConnectionPossibilityAgent(regionID int, cityID string, streetID string, houseID string, svcClassId int) (int, string, error) {
+func CheckConnectionPossibilityAgent(regionID int, cityID int, streetID int, houseID int, svcClassId int) (int, string, error) {
 	// Форматирование текущего времени
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -41,9 +41,9 @@ func CheckConnectionPossibilityAgent(regionID int, cityID string, streetID strin
 		<CheckConnectionPossibilityAgent DateRequest="%s" IdRequest="10001">
 			<Release>2</Release>
 			<RegionId>%d</RegionId>
-			<CityId>%s</CityId>
-			<StreetId>%s</StreetId>
-			<HouseId>%s</HouseId>
+			<CityId>%d</CityId>
+			<StreetId>%d</StreetId>
+			<HouseId>%d</HouseId>
 			<SvcClassIds>
 				<SvcClassId>%d</SvcClassId>
 			</SvcClassIds>
@@ -156,20 +156,31 @@ func CheckTHV(address string) {
 		panic(fmt.Sprintf("Ошибка преобразования regionID: %v", err))
 	}
 
+	// Преобразование regionID из string в int
+	houseNubmerInt, err := strconv.Atoi(houseNumber)
+	if err != nil {
+		panic(fmt.Sprintf("Ошибка преобразования regionID: %v", err))
+	}
+
+	eissdDB, err := eissd.NewDB("../common/db/eissd.db")
+	if err != nil {
+		panic(err)
+	}
+
 	// Вызов функции для получения CityID (или DistrictID) из БД
-	cityID, err := eissd.GetDistrictIDByRegionAndName(regionIDInt, cityName)
+	cityID, err := eissdDB.GetDistrictIDByRegionAndName(regionIDInt, cityName)
 	if err != nil {
 		panic(err)
 	}
 
 	// Вызов функции для получения streetID по region, cityID и имени улицы
-	streetID, err := eissd.GetStreetIDByRegionNameAndDistrict(cityID, streetName, regionIDInt)
+	streetID, err := eissdDB.GetStreetIDByRegionNameAndDistrict(cityID, streetName, regionIDInt)
 	if err != nil {
 		panic(err)
 	}
 
 	// Вызов функции для получения houseID по region, streetID и номеру дома
-	houseID, err := eissd.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNumber)
+	houseID, err := eissdDB.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNubmerInt)
 	if err != nil {
 		panic(err)
 	}
