@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"wifionAutolead/internal/models"
 	"wifionAutolead/pkg/eissd"
+	"wifionAutolead/pkg/utils"
 )
 
 // GetClient возвращает клиент для запроса к EISSD
@@ -137,11 +140,29 @@ func GetTarrifsOnRegion(region int) (models.GetTariffPlansAgent, error) {
 	return data, nil
 }
 
-func CheckTHV(address string) {
+// CheckTHV проверяет возможность подключения и возвращает успешное подключение или сообщение об ошибке.
+func CheckTHV(address string) (bool, string, error) {
+	// Загрузка .env файла и получение API ключа
+	err := godotenv.Load("../common/conf/.env")
+	if err != nil {
+		return false, "", fmt.Errorf("ошибка загрузки .env файла: %v", err)
+	}
+
+	apiKey := os.Getenv("DADATA_API_KEY")
+	if apiKey == "" {
+		return false, "", fmt.Errorf("API ключ не найден в .env файле")
+	}
+
+	// Вызов внешнего сервиса для получения информации по адресу
+	resultDaData, err := utils.GetInfoOnAddressTHV(address, apiKey)
+	if err != nil {
+		return false, "", fmt.Errorf("ошибка при получении данных по адресу: %v", err)
+	}
+
 	// Разделяем строку адреса по запятым
-	parts := strings.Split(address, ",")
+	parts := strings.Split(resultDaData, ",")
 	if len(parts) != 4 {
-		panic("Неверный формат адреса. Ожидается формат: 'regionID, cityName, streetName, houseNumber'")
+		return false, "", fmt.Errorf("неверный формат адреса. Ожидается формат: 'regionID, cityName, streetName, houseNumber'")
 	}
 
 	// Присваиваем переменным значения, полученные из строки адреса
@@ -153,50 +174,51 @@ func CheckTHV(address string) {
 	// Преобразование regionID из string в int
 	regionIDInt, err := strconv.Atoi(regionID)
 	if err != nil {
-		panic(fmt.Sprintf("Ошибка преобразования regionID: %v", err))
+		return false, "", fmt.Errorf("ошибка преобразования regionID: %v", err)
 	}
 
-	// Преобразование regionID из string в int
-	houseNubmerInt, err := strconv.Atoi(houseNumber)
+	// Преобразование houseNumber из string в int
+	houseNumberInt, err := strconv.Atoi(houseNumber)
 	if err != nil {
-		panic(fmt.Sprintf("Ошибка преобразования regionID: %v", err))
+		return false, "", fmt.Errorf("ошибка преобразования houseNumber: %v", err)
 	}
 
+	// Подключение к БД
 	eissdDB, err := eissd.NewDB("../common/db/eissd.db")
 	if err != nil {
-		panic(err)
+		return false, "", fmt.Errorf("ошибка подключения к базе данных: %v", err)
 	}
 
-	// Вызов функции для получения CityID (или DistrictID) из БД
+	// Получение cityID (или districtID) из БД
 	cityID, err := eissdDB.GetDistrictIDByRegionAndName(regionIDInt, cityName)
 	if err != nil {
-		panic(err)
+		return false, "", fmt.Errorf("ошибка получения districtID по региону и имени города: %v", err)
 	}
 
-	// Вызов функции для получения streetID по region, cityID и имени улицы
+	// Получение streetID по региону, cityID и имени улицы
 	streetID, err := eissdDB.GetStreetIDByRegionNameAndDistrict(cityID, streetName, regionIDInt)
 	if err != nil {
-		panic(err)
+		return false, "", fmt.Errorf("ошибка получения streetID по региону и имени улицы: %v", err)
 	}
 
-	// Вызов функции для получения houseID по region, streetID и номеру дома
-	houseID, err := eissdDB.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNubmerInt)
+	// Получение houseID по региону, streetID и номеру дома
+	houseID, err := eissdDB.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNumberInt)
 	if err != nil {
-		panic(err)
+		return false, "", fmt.Errorf("ошибка получения houseID по региону, улице и номеру дома: %v", err)
 	}
 
-	// Вызов функции для проверки подключения
+	// Проверка возможности подключения
 	responseCode, message, err := CheckConnectionPossibilityAgent(regionIDInt, cityID, streetID, houseID, 2)
 	if err != nil {
-		panic(err)
+		return false, "", fmt.Errorf("ошибка проверки возможности подключения: %v", err)
 	}
 
-	// Обработка результата
+	// Возвращаем результат на основе responseCode
 	if responseCode == 0 {
 		// Подключение возможно
-		fmt.Println("Подключение есть")
-	} else {
-		// Возвращаем сообщение об ошибке
-		fmt.Printf("Ошибка: %s\n", message)
+		return true, "Подключение возможно", nil
 	}
+
+	// Подключение невозможно
+	return false, message, nil
 }
