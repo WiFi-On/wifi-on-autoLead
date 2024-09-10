@@ -12,12 +12,13 @@ import (
 	eissd "wifionAutolead/pkg/eissd/models"
 )
 
+// EISSDpars - структура для работы с EISSD
 type EISSDpars struct {
 	URL string
 	sertPath string
 	sertKey string
 }
-
+// NewEISSDpars создает новый экземпляр EISSDpars
 func NewEISSDpars(url string, sertPath string, sertKey string) *EISSDpars {
 	return &EISSDpars{URL: url, sertPath: sertPath, sertKey: sertKey}
 }
@@ -42,7 +43,7 @@ func createTLSClient(certPath, keyPath string) (*http.Client, error) {
 		Transport: transport,
 	}, nil
 }
-
+// sendRequest создает и возвращает HTTP-запрос
 func sendRequest(client *http.Client, url, requestBody string) ([]byte, error) {
 	req, err := http.NewRequest("POST", url, strings.NewReader(requestBody))
 	if err != nil {
@@ -59,7 +60,7 @@ func sendRequest(client *http.Client, url, requestBody string) ([]byte, error) {
 
 	return io.ReadAll(resp.Body)
 }
-
+// GetDistrictsOrAddresses получает список адресов или населенных пунктов по региону
 func (e *EISSDpars) GetDistrictsOrAddresses(regionID string, structAddrObject int) ([]eissd.Address, error) {
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 
@@ -86,4 +87,32 @@ func (e *EISSDpars) GetDistrictsOrAddresses(regionID string, structAddrObject in
 	}
 
 	return result.Addresses, nil
+}
+// GetHouses получает список домов по региону
+func (e *EISSDpars) GetHouses(regionID string) ([]eissd.AddressHouse, error) {
+	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
+
+	requestBody := fmt.Sprintf(`
+		<GetAddressHouseInfoAgent DateRequest="%s" IdRequest="10001">
+			<Release>2</Release>
+			<RegionId>%s</RegionId>
+		</GetAddressHouseInfoAgent>`, dateRequest, regionID)
+
+	client, err := createTLSClient(e.sertPath, e.sertKey)
+	if err != nil {
+		return nil, err
+	}
+	
+	body, err := sendRequest(client, "https://mpz.rt.ru/xmlInteface", requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	// Парсинг XML в структуру
+	var result eissd.GetAddressHouseInfoAgentResponse
+	if err := xml.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("ошибка при парсинге XML: %w", err)
+	}
+
+	return result.AddressHouses, nil
 }
