@@ -7,5 +7,5 @@ import (
 
 func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/technicalFeasibilityCheck", handlers.TechnicalFeasibilityCheckHandler)
-	mux.HandleFunc("/getTHV", handlers.GetTHV)
+	mux.HandleFunc("/getTHV", handlers.GetTHVHandler)
 }
