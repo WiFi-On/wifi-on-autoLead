@@ -6,26 +6,31 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"wifionAutolead/internal/models"
-	"wifionAutolead/pkg/eissd"
-	"wifionAutolead/pkg/utils"
+	"wifionAutolead/internal/repository"
 )
 
-// GetClient возвращает клиент для запроса к EISSD
+type EISSD struct {
+	repo      *repository.DB
+	dadata    *Dadata
+	logger    *LoggerService
+	pathCert  string
+	pathKey   string
+	urlCRM    string
+}
+
+func NewEISSD(repo *repository.DB, pathCert string, pathKey string, urlCRM string, dadata *Dadata, logger *LoggerService) *EISSD {
+	return &EISSD{repo: repo, pathCert: pathCert, pathKey: pathKey, urlCRM: urlCRM, dadata: dadata, logger: logger}
+}
 func getClient(cert tls.Certificate) *http.Client {
-	// Создание конфигурации TLS
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	}
 
-	// Настройка транспортного уровня с использованием TLS
 	transport := &http.Transport{
 		TLSClientConfig: tlsConfig,
 	}
@@ -34,191 +39,313 @@ func getClient(cert tls.Certificate) *http.Client {
 		Transport: transport,
 	}
 }
-
-// CheckConnectionPossibilityAgent выполняет проверку возможности подключения
-func CheckConnectionPossibilityAgent(regionID int, cityID int, streetID int, houseID int, svcClassId int) (int, string, error) {
-	// Форматирование текущего времени
+func (e *EISSD) CheckTHV(address string) ([]models.ReturnDataConnectionPos, string, error) {
 	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
+	dadataInfo, err := e.dadata.GetInfoOnAddress(address)
+	if err != nil {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("дадата невернула данные о адресе: %v", err)
+	}
+	infoAddressDadata := dadataInfo.Suggestions[0].Data
+	
+	//Блок условий для нахождения населенного пункта(district) 
+	var idDistrict string
+	var districtFiasID string
+	if infoAddressDadata.Area != "" && infoAddressDadata.City != ""{
+		areaId, err := e.repo.GetDistrictIDByRegionAndName(infoAddressDadata.RegionID, infoAddressDadata.Area)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди района в регионе: %v", err)
+		}
 
+		cityId, err := e.repo.GetDistrictIDByParentIDandName(areaId, infoAddressDadata.City)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "",fmt.Errorf("не удалось получить айди района: %v", err)
+		}
+		
+
+
+		if cityId == "" {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "не удалось получить айди населенного пункта", address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+		idDistrict = cityId
+		districtFiasID = infoAddressDadata.CityFiasId
+
+	} else if infoAddressDadata.City != "" && infoAddressDadata.Settlement != ""{
+		cityId, err := e.repo.GetDistrictIDByRegionAndName(infoAddressDadata.RegionID, infoAddressDadata.City)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди города в регионе: %v", err)
+		}
+		
+		settlementId, err := e.repo.GetDistrictIDByParentIDandName(cityId, infoAddressDadata.Settlement)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+
+
+
+		if settlementId == "" {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "не удалось получить айди населенного пункта", address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+		idDistrict = settlementId
+		districtFiasID = infoAddressDadata.SettlementFiasId
+
+	} else if infoAddressDadata.Area  != "" && infoAddressDadata.Settlement != ""{
+		areaId, err := e.repo.GetDistrictIDByRegionAndName(infoAddressDadata.RegionID, infoAddressDadata.Area)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди района в регионе: %v", err)
+		}
+		
+		settlementId, err := e.repo.GetDistrictIDByParentIDandName(areaId, infoAddressDadata.Settlement)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+
+
+
+		if settlementId == "" {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "не удалось получить айди населенного пункта", address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+		idDistrict = settlementId
+		districtFiasID = infoAddressDadata.SettlementFiasId
+
+	} else if infoAddressDadata.City != "" {
+		cityId, err := e.repo.GetDistrictIDByRegionAndName(infoAddressDadata.RegionID, infoAddressDadata.City)
+		if err != nil {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди города в регионе: %v", err)
+		}
+
+
+
+		if cityId == "" {
+			e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "не удалось получить айди населенного пункта", address))
+			e.logger.Log("ErrorAddress: " + address)
+			return nil, "", fmt.Errorf("не удалось получить айди населенного пункта: %v", err)
+		}
+		idDistrict = cityId
+		districtFiasID = infoAddressDadata.CityFiasId
+
+	} else {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "ошибка в нахождении district", address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка в нахождении district")
+	}
+
+
+	//Получение айди улицы 
+	idStreet, err := e.repo.GetStreetIDByNameAndDistrictId(infoAddressDadata.Street, idDistrict)
+	if err != nil  {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("не удалось получить айди улицы: %v", err)
+	}
+	if idStreet == "" {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "ошибка в нахождении street", address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка в нахождении street")
+	}
+	//Получение айди дома
+	houseAndBlock := infoAddressDadata.House + infoAddressDadata.Block
+	idHouse, err := e.repo.GetHouseIDByStreetIdAndHouse(idStreet, houseAndBlock)
+	if err != nil {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("не удалось получить айди дома: %v", err)
+	}
+	if idHouse == "" {
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, "ошибка в нахождении house", address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка в нахождении house")
+	}
+	// Отправка запроса
 	requestBody := fmt.Sprintf(`
 		<CheckConnectionPossibilityAgent DateRequest="%s" IdRequest="10001">
-			<Release>2</Release>
-			<RegionId>%d</RegionId>
-			<CityId>%d</CityId>
-			<StreetId>%d</StreetId>
-			<HouseId>%d</HouseId>
-			<SvcClassIds>
-				<SvcClassId>%d</SvcClassId>
-			</SvcClassIds>
-		</CheckConnectionPossibilityAgent>`, dateRequest, regionID, cityID, streetID, houseID, svcClassId)
-
-	// Загрузка сертификата и ключа
-	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
+    		<Release>2</Release>
+    		<RegionId>%s</RegionId>
+    		<CityId>%s</CityId>
+    		<StreetId>%s</StreetId>
+    		<HouseId>%s</HouseId>
+    		<Flat>%s</Flat>
+    		<TypeAdrId>0</TypeAdrId >
+    		<SvcClassIds>
+        		<SvcClassId>2</SvcClassId>
+    		</SvcClassIds>
+		</CheckConnectionPossibilityAgent>`, dateRequest, infoAddressDadata.RegionID, idDistrict, idStreet, idHouse, infoAddressDadata.Flat)
+	cert, err := tls.LoadX509KeyPair(e.pathCert, e.pathKey)
 	if err != nil {
-		return 0, "", fmt.Errorf("ошибка при загрузке сертификата: %w", err)
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка при загрузке сертификата: %w", err)
 	}
-
 	client := getClient(cert)
-
-	// Создание HTTP-запроса
-	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
+	req, err := http.NewRequest("POST", e.urlCRM, strings.NewReader(requestBody))
 	if err != nil {
-		return 0, "", fmt.Errorf("ошибка при создании запроса: %w", err)
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка при создании запроса: %w", err)
 	}
-
-	// Установка необходимых заголовков
 	req.Header.Set("Content-Type", "text/xml")
-
-	// Отправка HTTP-запроса
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", fmt.Errorf("ошибка при отправке запроса: %w", err)
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка при отправке запроса: %w", err)
 	}
 	defer resp.Body.Close()
-
-	// Чтение ответа
+	// Чтение и разбор тела ответа
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, "", fmt.Errorf("ошибка при чтении тела ответа: %w", err)
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка при чтении тела ответа: %w", err)
 	}
-
-	// Парсинг XML в структуру
-	var result models.CheckConnectionPossibilityResponse
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return 0, "", fmt.Errorf("ошибка при парсинге XML: %w", err)
-	}
-
-	// Возврат результата
-	return result.Response, result.Message, nil
-}
-
-// GetTarrifsOnRegion получение тарифов по региону
-func GetTarrifsOnRegion(region int) (models.GetTariffPlansAgent, error) {
-	requestBody := fmt.Sprintf(`
-		<GetTariffPlansAgent>
-    		<RegionId>%d</RegionId>
-		</GetTariffPlansAgent>`, region)
-
-	// Загрузка сертификата и ключа
-	cert, err := tls.LoadX509KeyPair("../../common/certs/krivoshein.crt", "../../common/certs/krivoshein.key")
-	if err != nil {
-		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
-	}
-
-	client := getClient(cert)
-
-	// Создание HTTP-запроса
-	req, err := http.NewRequest("POST", "https://mpz.rt.ru/xmlInteface", strings.NewReader(requestBody))
-	if err != nil {
-		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при создании запроса: %w", err)
-	}
-
-	// Установка необходимых заголовков
-	req.Header.Set("Content-Type", "text/xml")
-
-	// Отправка HTTP-запроса
-	resp, err := client.Do(req)
-	if err != nil {
-		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при отправке запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Чтение ответа
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
-	}
-
-	// Парсинг XML в структуру
-	var data models.GetTariffPlansAgent
+	var data models.CheckConnectionPossibilityAgent
 	err = xml.Unmarshal(body, &data)
 	if err != nil {
-		return models.GetTariffPlansAgent{}, fmt.Errorf("ошибка при разборе XML: %w", err)
+		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
+		e.logger.Log("ErrorAddress: " + address)
+		return nil, "", fmt.Errorf("ошибка при разборе XML: %w", err)
 	}
 
-	// Возврат результата
+	var thv []models.ReturnDataConnectionPos
+	for _, item := range data.ConnectionPoss {
+		thv = append(thv, models.ReturnDataConnectionPos{
+			TechName: item.TechName,
+			Res:      item.Res,
+		})
+	}
+
+	// Запись в логи и возвращение результата
+	e.logger.Log(fmt.Sprintf("time:%s || result:%s || address:%s", dateRequest, body, address))
+	e.logger.Log("FoundAddress: " + address)
+	return thv, districtFiasID, nil
+}
+func (e *EISSD) SendLead(idLead string, name string, surname string, patronymic string, phone string, xmlProduct string,
+	idRegion string, idDistrict string, idStreet string, idHouse string, flat string) ([]models.ResponseSendLead, error) {
+
+	dateRequest := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
+	requestBody := fmt.Sprintf(`
+		<CreatePacketOrderAgent>
+            <Orders>
+                <Order>
+                	<TariffTypeId>1</TariffTypeId>
+                	<Num>%s</Num>
+                	<Date>%s</Date>
+                	<Client>
+                    	<FirstName>%s</FirstName>
+                    	<LastName>%s</LastName>
+                    	<MiddleName>%s</MiddleName>
+                    	<ContactCellPhone>%s</ContactCellPhone>
+                	</Client>
+                	<Note>Техно выгоды. Интернет, ТВ, СВЯЗЬ Продавец - ИП Кривошеин ЯП</Note>
+                	%s
+                	<InstAdr>
+                    	<RegionId>%s</RegionId>
+                    	<CityId>%s</CityId>
+                    	<StreetId>%s</StreetId>
+                    	<HouseId>%s</HouseId>
+                    	<Flat>%s</Flat>
+                    	<TypeAdrId>0</TypeAdrId>
+                	</InstAdr>
+                </Order>
+            </Orders>
+        </CreatePacketOrderAgent>`, idLead, dateRequest, name, surname, patronymic, phone, xmlProduct, idRegion, idDistrict, idStreet, idHouse, flat)
+
+	fmt.Println(requestBody)
+	cert, err := tls.LoadX509KeyPair(e.pathCert, e.pathKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при загрузке сертификата: %w", err)
+	}
+
+	client := getClient(cert)
+
+	req, err := http.NewRequest("POST", e.urlCRM, strings.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при создании запроса: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "text/xml")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при отправке запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ошибка: получен неожиданный статус ответа %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при чтении тела ответа: %w", err)
+	}
+	fmt.Println(string(body))
+
+	var data []models.ResponseSendLead 
+	err = xml.Unmarshal(body, &data)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка при разборе XML: %w", err)
+	}
+
 	return data, nil
 }
-
-// CheckTHV проверяет возможность подключения и возвращает успешное подключение или сообщение об ошибке.
-func CheckTHV(address string) (bool, string, error) {
-	// Загрузка .env файла и получение API ключа
-	err := godotenv.Load("../common/conf/.env")
+func (e *EISSD) GetTariff(region string) (string, error) {
+	tarrifs, err := e.repo.GetTariffsByRegion("01")
 	if err != nil {
-		return false, "", fmt.Errorf("ошибка загрузки .env файла: %v", err)
+		return "", err
 	}
 
-	apiKey := os.Getenv("DADATA_API_KEY")
-	if apiKey == "" {
-		return false, "", fmt.Errorf("API ключ не найден в .env файле")
+	var tariffId int
+	var techId int
+	var techSvcId int
+	var optionId int
+	var optionSvcId int
+	for _, tariff := range tarrifs {
+		if tariff.Techs != nil && tariff.Options != nil {
+			tariffId = tariff.ID
+			techId = tariff.Techs[0].TechId
+			techSvcId = tariff.Techs[0].SvcClassId
+			optionId = tariff.Options[0].ID
+			optionSvcId = tariff.Options[0].SvcClassId
+		}
 	}
 
-	// Вызов внешнего сервиса для получения информации по адресу
-	resultDaData, err := utils.GetInfoOnAddressTHV(address, apiKey)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка при получении данных по адресу: %v", err)
-	}
-
-	// Разделяем строку адреса по запятым
-	parts := strings.Split(resultDaData, ",")
-	if len(parts) != 4 {
-		return false, "", fmt.Errorf("неверный формат адреса. Ожидается формат: 'regionID, cityName, streetName, houseNumber'")
-	}
-
-	// Присваиваем переменным значения, полученные из строки адреса
-	regionID := parts[0]
-	cityName := strings.TrimSpace(parts[1])
-	streetName := strings.TrimSpace(parts[2])
-	houseNumber := strings.TrimSpace(parts[3])
-
-	// Преобразование regionID из string в int
-	regionIDInt, err := strconv.Atoi(regionID)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка преобразования regionID: %v", err)
-	}
-
-	// Преобразование houseNumber из string в int
-	houseNumberInt, err := strconv.Atoi(houseNumber)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка преобразования houseNumber: %v", err)
-	}
-
-	// Подключение к БД
-	eissdDB, err := eissd.NewDB("../common/db/eissd.db")
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка подключения к базе данных: %v", err)
-	}
-
-	// Получение cityID (или districtID) из БД
-	cityID, err := eissdDB.GetDistrictIDByRegionAndName(regionIDInt, cityName)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка получения districtID по региону и имени города: %v", err)
-	}
-
-	// Получение streetID по региону, cityID и имени улицы
-	streetID, err := eissdDB.GetStreetIDByRegionNameAndDistrict(cityID, streetName, regionIDInt)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка получения streetID по региону и имени улицы: %v", err)
-	}
-
-	// Получение houseID по региону, streetID и номеру дома
-	houseID, err := eissdDB.GetHouseIDByRegionStreetAndHouse(regionIDInt, streetID, houseNumberInt)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка получения houseID по региону, улице и номеру дома: %v", err)
-	}
-
-	// Проверка возможности подключения
-	responseCode, message, err := CheckConnectionPossibilityAgent(regionIDInt, cityID, streetID, houseID, 2)
-	if err != nil {
-		return false, "", fmt.Errorf("ошибка проверки возможности подключения: %v", err)
-	}
-
-	// Возвращаем результат на основе responseCode
-	if responseCode == 0 {
-		// Подключение возможно
-		return true, "Подключение возможно", nil
-	}
-
-	// Подключение невозможно
-	return false, message, nil
+	result := fmt.Sprintf(`
+		<Product>
+            <TariffId>%d</TariffId>
+                <Techs>
+                    <Tech>
+                        <TechId>%d</TechId>
+                        <serviceId>%d</serviceId>
+                    </Tech>
+                </Techs>
+            <options>
+                <option>
+                    <OptionId>%d</OptionId>
+                    <serviceId>%d</serviceId>
+                </option>
+            </options>
+        </Product>`, tariffId, techId, techSvcId, optionId, optionSvcId)
+	return result, nil
 }

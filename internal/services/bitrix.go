@@ -1,10 +1,12 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"wifionAutolead/internal/models"
 )
 
 type Bitrix struct {
@@ -17,8 +19,9 @@ func NewBitrix(urltoken string) *Bitrix {
 	}
 }
 
+// id ростелекома из битрикса = 52
 // Функция получения списка лидов по айди(из битрикса) провайдера.
-func (b *Bitrix) GetDealsOnProviders(idProvider string) ([]string, error) {
+func (b *Bitrix) GetDealsOnProviders(idProvider string) ([]models.BitrixLead, error) {
 	if b.URLToken == "" {
 		return nil, fmt.Errorf("URLToken is empty")
 	}
@@ -28,8 +31,8 @@ func (b *Bitrix) GetDealsOnProviders(idProvider string) ([]string, error) {
 	params := url.Values{}
 	params.Add("filter[UF_CRM_1697294773665]", idProvider)
 	params.Add("filter[STAGE_ID]", "PREPAYMENT_INVOICE")
-	
-
+	params.Add("select[]", "*")
+	params.Add("select[]", "UF_*")
 
 	urlGetLeads = fmt.Sprintf("%s%s", urlGetLeads, params.Encode())
 	fmt.Printf("URL: %s\n", urlGetLeads)
@@ -45,5 +48,11 @@ func (b *Bitrix) GetDealsOnProviders(idProvider string) ([]string, error) {
 		return nil, fmt.Errorf("ошибка при чтении ответа: %v", err)
 	}
 
-	return []string{string(body)}, nil
+	var response models.BitrixLeadsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("ошибка при декодировании JSON: %v", err)
+	}
+
+	return response.Result, nil
 }
+

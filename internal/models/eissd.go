@@ -78,3 +78,41 @@ type Option struct {
 	IsBase          int    `xml:"IsBase"`
 	SalesChannelsId string `xml:"SalesChannelsId"`
 }
+type CheckConnectionPossibilityAgent struct {
+	XMLName        xml.Name          `xml:"CheckConnectionPossibilityAgent"`
+	Response       int               `xml:"response"`
+	ConnectionPoss []ConnectionPos   `xml:"ConnectionPoss>ConnectionPos"`
+}
+type ConnectionPos struct {
+	TechName  string `xml:"TechName"`
+	Res       string `xml:"Res"`
+	MaxSpeed  string `xml:"MaxSpeed"`
+	Descr     string `xml:"Descr"`
+	PlanDate  string `xml:"PlanDate"`
+}
+
+type ReturnDataConnectionPos struct {
+	TechName string
+	Res string
+}
+
+type IdsAddress struct {
+    IdRegion string
+    IdDistrict string
+    IdStreet string
+    IdHouse string
+}
+
+type ResponseSendLead struct {
+    XMLName            xml.Name `xml:"CreatePacketOrderAgent"`
+    Response           int      `xml:"response"`
+    OrderCreateResults struct {
+        OrderCreateResult struct {
+            Result              int    `xml:"result"`
+            OrderID             int64  `xml:"orderId"`
+            SalesChannelID      int    `xml:"salesChannelId"`
+            OrderCreateDateTime string `xml:"orderCreateDateTime"`
+            OrderNum            int    `xml:"orderNum"`
+        } `xml:"orderCreateResult"`
+    } `xml:"orderCreateResults"`
+}

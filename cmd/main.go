@@ -1,110 +1,144 @@
 package main
 
 import (
-	"fmt"
+	"log"
+	"net/http"
+	"os"
+	controllers "wifionAutolead/internal/controllers/rest"
+	"wifionAutolead/internal/repository"
+	"wifionAutolead/internal/routes"
+	"wifionAutolead/internal/services"
 
 	"github.com/joho/godotenv"
-
-	"wifionAutolead/pkg/eissd"
 )
 
-// Айди ростелекома = 52
 func main() {
-	numbers := []string{
-		"01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
-		"11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
-		"21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
-		"31", "32", "33", "34", "35", "36", "37", "38", "39", "40",
-		"41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
-		"51", "52", "53", "54", "55", "56", "57", "58", "59", "60",
-		"61", "62", "63", "64", "65", "66", "67", "68", "69", "70",
-		"71", "72", "73", "74", "75", "76", "77", "78", "79", "80",
-		"81", "82", "83", "84", "85", "86", "87", "88", "89", "90",
-		"91", "92", "93", "94", "95", "96", "97", "98", "99",
+	if err := godotenv.Load("../common/conf/.env"); err != nil {
+		log.Fatalf("Ошибка при загрузке .env файла: %v", err)
 	}
-	
 
-	godotenv.Load("../common/conf/.env")
+	bitrixURLToken := os.Getenv("BITRIX_URL_TOKEN")
+	dadataAPIKey := os.Getenv("DADATA_API_KEY")
 
-	eissdClient := eissd.NewEISSDpars("https://eissd.roseltorg.ru", "../common/certs/krivoshein.crt", "../common/certs/krivoshein.key")
+	// Подключение к базе данных
+	connStr := "user=admin password=admin dbname=eissd sslmode=disable"
 
-	districts, err := eissdClient.GetDistrictsOrAddresses("02", 1)
+	// Инициализация репозиториев
+	eissdRepo, err := repository.NewDB(connStr)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Не удалось инициализировать репозитории: %v", err)
 	}
 
-	fmt.Println(districts)
-	fmt.Println("Дистрикты получил")
-
-	eissdDB, err := eissd.NewDB("../common/db/eissd.db")
+	// Инициализация логгера
+	loggerService, err := services.NewLoggerService("../common/log/eissd.log")
 	if err != nil {
-		panic(err)
+		log.Fatalf("Не удалось инициализировать сервис логирования: %v", err)
 	}
-	fmt.Println("Файл создан либо уже был создан")
-
-	err = eissdDB.CreateDistrictsTable()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Таблица districts создана либо уже была создана")
-
-	err = eissdDB.CreateStreetsTable()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Таблица streets создана либо уже была создана")
-
-	err = eissdDB.CreateHousesTable()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Таблица houses создана либо уже была создана")
-
-	for j := 0; j < len(numbers); j++ {
-		
-	}
-	
-	// for _, reg := range numbers {
-	// 	districts, err := eissdClient.GetDistrictsOrAddresses(reg, 1)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	fmt.Println(districts)
-	// 	fmt.Println("Дистрикты получил")
-
-	// 	for j, district := range districts {
-	// 		err = eissdDB.AddDistrict(district.AddrObjectId, district.RegionId, district.NameAddrObject, district.AbbrNameObject)
-	// 		if err != nil {
-	// 			fmt.Println("Номер итерации = " , j)
-	// 			fmt.Println("Ошибка = ", err)
-	// 			fmt.Println("Дистрикт = ", district)
-	// 			fmt.Println("Регион = ", reg)
-	// 			panic("ОШИБКА")
-	// 		}
-	// 		fmt.Printf("Дистрикт #%d добавлен\n", j)
-	// 	}
-		
-	// }
-
-	for _, reg := range numbers {
-		districts, err := eissdClient.GetDistrictsOrAddresses(reg, 0)
-		if err != nil {
-			panic(err)
+	defer func() {
+		if err := loggerService.Close(); err != nil {
+			log.Printf("Ошибка при закрытии сервиса логирования: %v", err)
 		}
-		fmt.Println(districts)
-		fmt.Println("Улицы получил")
+	}()
 
-		for j, district := range districts {
-			err = eissdDB.AddStreet(district.AddrObjectId, district.RegionId, district.NameAddrObject, district.AbbrNameObject, district.ParentId)
-			if err != nil {
-				fmt.Println("Номер итерации = " , j)
-				fmt.Println("Ошибка = ", err)
-				fmt.Println("Улица = ", district)
-				fmt.Println("Регион = ", reg)
-				panic("ОШИБКА")
-			}
-			fmt.Printf("Улица #%d добавлена\n", j)
-		}
-		
-	}
+	// Инициализация сервисов
+	dadataService := services.NewDadata(dadataAPIKey)
+	eissdService := services.NewEISSD(eissdRepo, "../common/certs/krivoshein_dev.crt", "../common/certs/krivoshein_dev.key", "https://mpz-rc.rt.ru/xmlInteface", dadataService, loggerService)
+	bitrixService := services.NewBitrix(bitrixURLToken)
+
+	// Инициализация хэндлеров
+	controllers := controllers.NewEISSDController(eissdService, bitrixService, dadataService)
+
+	// Создание маршрутизатора
+	mux := http.NewServeMux()
+
+	// Регистрация маршрутов
+	routes.RegisterRoutes(mux, controllers)
+
+	log.Println("Запуск сервера на порту 8080...")
+	loggerService.Log("Сервер запущен на порту 8080") // Логируем запуск сервера
+
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
+
+// func main(){
+// 	// bitrixClient := services.NewBitrix("https://on-wifi.bitrix24.ru/rest/11940/s1l6kfr94x1vuck4/")
+// 	dadataClient := dadata.NewDadata("71378de14318d10009285e018aedbfe5a353bb5a")
+// 	repo, err := repository.NewDB("user=admin password=admin dbname=eissd sslmode=disable")
+// 	if err != nil {
+// 		fmt.Errorf("не удалось инициализировать репозитории: %v", err)
+// 	}
+// 	eissdClient := services.NewEISSD(repo, "../common/certs/krivoshein_dev.crt", "../common/certs/krivoshein_dev.key", "https://mpz-rc.rt.ru/xmlInteface")
+
+// 	// leads, err := bitrixClient.GetDealsOnProviders("52")
+// 	// if err != nil {
+// 	// 	fmt.Println(err)
+// 	// }
+
+// 	// addressBitrix := leads[0].Address
+// 	// addressArray := strings.Split(addressBitrix, "|")
+// 	// fmt.Println(addressArray[0])
+
+// 	address := "Тюмень Широтная 105 кв 14"
+
+// 	dadataInfo, err := dadataClient.GetInfoOnAddress(address)
+// 	if err != nil {
+// 		fmt.Println(err)
+// 	}
+// 	fmt.Println(dadataInfo.Suggestions[0].Data)
+// 	data := dadataInfo.Suggestions[0].Data
+// 	regionNumber := string([]rune(data.RegionKladrID)[0:2])
+// 	thv, err := eissdClient.CheckTHV(regionNumber, data.Area, data.City, data.Settlement, data.Street, data.House, data.Block, data.Flat)
+// 	if err != nil {
+// 		fmt.Println(err)
+// 	}
+// 	fmt.Println(thv)
+
+// }
+
+// func main() {
+// 	clientDB, err := eissd.NewDB("user=admin password=admin dbname=eissd sslmode=disable")
+// 	if err != nil {
+// 		fmt.Errorf("не удалось инициализировать репозитории: %v", err)
+// 	}
+// 	defer clientDB.Close()
+
+// 	// Открываем файл
+// 	file, err := os.Open("tariffsOnRegion.txt")
+// 	if err != nil {
+// 		fmt.Println("Ошибка при открытии файла:", err)
+// 		return
+// 	}
+// 	defer file.Close() // Закрываем файл в конце
+
+// 	// Создаем сканер для построчного чтения файла
+// 	scanner := bufio.NewScanner(file)
+
+// 	// Читаем строки из файла
+// 	for scanner.Scan() {
+// 		line := scanner.Text()
+// 		parts := strings.Split(line, "~")
+// 		if parts[1] == "Технологический IPTV" {
+// 			clientDB.AddTariffForRegion(parts[2], 0, 0, 0, 0)
+// 		}
+// 	}
+
+// 	// Проверяем на наличие ошибок при чтении
+// 	if err := scanner.Err(); err != nil {
+// 		fmt.Println("Ошибка при чтении файла:", err)
+// 	}
+// }
+
+// func main() {
+// 	clientDB, err := eissd.NewDB("user=admin password=admin dbname=eissd sslmode=disable")
+// 	clientEISSD := eissd.NewEISSDpars("../common/certs/krivoshein.crt", "../common/certs/krivoshein.key", "https://mpz.rt.ru/xmlInteface")
+// 	if err != nil {
+// 		fmt.Errorf("Не удалось инициализировать репозитории: %v", err)
+// 	}
+// 	defer clientDB.Close()
+
+// 	tariffs, err := clientEISSD.GetTarrifsOnRegion("72")
+// 	if err != nil {
+// 		fmt.Println(err)
+// 	}
+// 	fmt.Println(tariffs)
+// }
