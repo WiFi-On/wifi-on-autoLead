@@ -54,10 +54,10 @@ func main() {
 	// Регистрация маршрутов
 	routes.RegisterRoutes(mux, controllers)
 
-	log.Println("Запуск сервера на порту 8080...")
-	loggerService.Log("Сервер запущен на порту 8080") // Логируем запуск сервера
+	log.Println("Запуск сервера на порту 3020...")
+	loggerService.Log("Сервер запущен на порту 3020") // Логируем запуск сервера
 
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":3020", mux))
 }
 
 // func main(){
