@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,12 +17,16 @@ func main() {
 	if err := godotenv.Load("../common/conf/.env"); err != nil {
 		log.Fatalf("Ошибка при загрузке .env файла: %v", err)
 	}
-
+	
+	// Инициализация переменных окружения
 	bitrixURLToken := os.Getenv("BITRIX_URL_TOKEN")
 	dadataAPIKey := os.Getenv("DADATA_API_KEY")
+	nameDB := os.Getenv("POSTGRESQL_DBNAME")
+	userDB := os.Getenv("POSTGRESQL_USER")
+	passwordDB := os.Getenv("POSTGRESQL_PASSWORD")
 
 	// Подключение к базе данных
-	connStr := "user=admin password=admin dbname=eissd sslmode=disable"
+	connStr := fmt.Sprintf("user=%s password=%s dbname=%s", userDB, passwordDB, nameDB)
 
 	// Инициализация репозиториев
 	eissdRepo, err := repository.NewDB(connStr)
