@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,13 +20,12 @@ func main() {
 	// Инициализация переменных окружения
 	bitrixURLToken := os.Getenv("BITRIX_URL_TOKEN")
 	dadataAPIKey := os.Getenv("DADATA_API_KEY")
-	nameDB := os.Getenv("POSTGRESQL_DBNAME")
-	userDB := os.Getenv("POSTGRESQL_USER")
-	passwordDB := os.Getenv("POSTGRESQL_PASSWORD")
+	// nameDB := os.Getenv("POSTGRESQL_DBNAME")
+	// userDB := os.Getenv("POSTGRESQL_USER")
+	// passwordDB := os.Getenv("POSTGRESQL_PASSWORD")
 
 	// Подключение к базе данных
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s", userDB, passwordDB, nameDB)
-
+	connStr := "user = admin password = admin dbname=eissd sslmode=disable"
 	// Инициализация репозиториев
 	eissdRepo, err := repository.NewDB(connStr)
 	if err != nil {

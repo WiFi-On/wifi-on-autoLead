@@ -165,7 +165,8 @@ func (e *EISSD) CheckTHV(address string) ([]models.ReturnDataConnectionPos, stri
 		return nil, "", fmt.Errorf("ошибка в нахождении street")
 	}
 	//Получение айди дома
-	houseAndBlock := infoAddressDadata.House + infoAddressDadata.Block
+	houseAndBlock := infoAddressDadata.House + " " + infoAddressDadata.Block
+
 	idHouse, err := e.repo.GetHouseIDByStreetIdAndHouse(idStreet, houseAndBlock)
 	if err != nil {
 		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
