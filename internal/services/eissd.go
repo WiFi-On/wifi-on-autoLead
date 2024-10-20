@@ -165,7 +165,10 @@ func (e *EISSD) CheckTHV(address string) ([]models.ReturnDataConnectionPos, stri
 		return nil, "", fmt.Errorf("ошибка в нахождении street")
 	}
 	//Получение айди дома
-	houseAndBlock := infoAddressDadata.House + " " + infoAddressDadata.Block
+	houseAndBlock := infoAddressDadata.House
+	if infoAddressDadata.Block != "" {
+    	houseAndBlock += " " + infoAddressDadata.Block
+	}
 
 	idHouse, err := e.repo.GetHouseIDByStreetIdAndHouse(idStreet, houseAndBlock)
 	if err != nil {
@@ -192,6 +195,9 @@ func (e *EISSD) CheckTHV(address string) ([]models.ReturnDataConnectionPos, stri
         		<SvcClassId>2</SvcClassId>
     		</SvcClassIds>
 		</CheckConnectionPossibilityAgent>`, dateRequest, infoAddressDadata.RegionID, idDistrict, idStreet, idHouse, infoAddressDadata.Flat)
+
+	fmt.Println(requestBody)
+
 	cert, err := tls.LoadX509KeyPair(e.pathCert, e.pathKey)
 	if err != nil {
 		e.logger.Log(fmt.Sprintf("time:%s || error:%s || address:%s", dateRequest, err.Error(), address))
